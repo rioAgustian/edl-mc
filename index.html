@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Electric Double Layer Simulator</title>
+<meta name="description" content="Live Metropolis Monte Carlo of ions next to a charged electrode, compared with Gouy-Chapman theory.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: control strip, wide electrolyte "cell" view, two live charts, then a checks table and model notes */
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --fg: #15202b;
+  --muted: #5a6877;
+  --line: #d7dde4;
+  --electrode: #3b4652;
+  --coion: #d0453a;      /* + ions, red as in the notebook */
+  --counter: #2667b8;    /* - ions, blue as in the notebook */
+  --phi: #7a4fb3;
+  --ok: #1d8a4c;
+  --warn: #b66a00;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e141a; --surface: #161f28; --fg: #e5ecf2; --muted: #93a1af; --line: #2a3542;
+    --electrode: #9aa7b4; --coion: #f0756a; --counter: #66a3f0; --phi: #b28ce6; --ok: #4cc27f; --warn: #f0b04f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e141a; --surface: #161f28; --fg: #e5ecf2; --muted: #93a1af; --line: #2a3542;
+  --electrode: #9aa7b4; --coion: #f0756a; --counter: #66a3f0; --phi: #b28ce6; --ok: #4cc27f; --warn: #f0b04f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 48px;
+  display: grid; gap: 20px;
+}
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--font-display); font-size: clamp(28px, 4.2vw, 44px); line-height: 1.08; margin: 0; text-wrap: balance; }
+h1 .m { color: var(--counter); }
+h1 .p { color: var(--coion); }
+h2 { font-family: var(--font-display); font-size: 20px; margin: 0; text-wrap: balance; }
+.lede { margin: 0; max-width: 72ch; color: var(--muted); }
+
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: 600 14px var(--font-body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+button.primary { background: var(--fg); color: var(--surface); border-color: var(--fg); min-width: 84px; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--counter); outline-offset: 2px; }
+.slider { display: grid; grid-template-columns: auto 110px auto; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.slider input { width: 110px; accent-color: var(--fg); }
+.slider output { font-family: var(--font-mono); color: var(--fg); min-width: 9ch; font-variant-numeric: tabular-nums; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.tag { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+canvas { display: block; width: 100%; max-width: 100%; }
+#cell { aspect-ratio: 2.6 / 1; border-radius: 8px; background: var(--bg); }
+.chart { aspect-ratio: 1.55 / 1; }
+#energy { height: 70px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); }
+.sw { display: inline-block; width: 16px; height: 0; border-top: 2.5px solid; vertical-align: middle; margin-right: 6px; }
+.sw.dash { border-top-style: dashed; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 6px; }
+.msg { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; min-height: 3em; border-left: 3px solid var(--counter); padding: 4px 0 4px 10px; }
+.msg .ok { color: var(--ok); font-weight: 600; }
+.msg .bad { color: var(--coion); font-weight: 600; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 26px; }
+.stat { display: grid; }
+.stat .k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.stat .v { font-family: var(--font-mono); font-size: 16px; font-variant-numeric: tabular-nums; }
+
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 600px; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font-family: var(--font-display); font-size: 14px; color: var(--muted); font-weight: 500; }
+td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+.chip { display: inline-block; font-family: var(--font-mono); font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.chip.ok { color: var(--ok); }
+.chip.warn { color: var(--warn); }
+.notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+@media (max-width: 900px) { .notes { grid-template-columns: 1fr; } }
+.notes p, .notes ol { margin: 0; }
+.notes ol { padding-left: 20px; display: grid; gap: 3px; }
+.notes ol li::marker { font-family: var(--font-mono); color: var(--muted); }
+.formula { font-family: var(--font-mono); font-size: 13px; background: var(--bg); border-radius: 8px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+footer { font-size: 12.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Modelling of Materials Interfaces · Lab 5</div>
+    <h1>Electric Double Layer <span class="m">−</span><span class="p">+</span> Monte Carlo</h1>
+    <p class="lede">A positively charged electrode sits at x = 0 in a 1:1 salt solution. The electrolyte is cut into 80 thin planes; ions hop between neighbouring planes and each hop is accepted or rejected with the Metropolis rule. Watch the counterions pile up at the electrode and compare the averaged profiles with Gouy-Chapman theory.</p>
+  </header>
+
+  <div class="controls" role="group" aria-label="Simulation controls">
+    <div class="btns">
+      <button id="play" class="primary" type="button">Pause</button>
+      <button id="step" type="button" title="One trial move of one ion">Step once</button>
+      <button id="reset" type="button">Restart</button>
+    </div>
+    <label class="slider" for="salt">Salt <input id="salt" type="range" min="0.02" max="0.2" step="0.001" value="0.083"><output id="saltOut">0.083 M</output></label>
+    <label class="slider" for="sig">σ <input id="sig" type="range" min="0" max="10" step="1" value="4"><output id="sigOut">0.20 e/nm²</output></label>
+    <label class="slider" for="temp">T <input id="temp" type="range" min="200" max="1000" step="10" value="298"><output id="tempOut">298 K</output></label>
+    <label class="slider" for="speed">Speed <input id="speed" type="range" min="1" max="5" step="1" value="4"><output id="speedOut">20 cyc/frame</output></label>
+  </div>
+
+  <section class="card" aria-labelledby="cellTitle">
+    <div class="card-head">
+      <h2 id="cellTitle">Electrolyte, instantaneous configuration</h2>
+      <span class="tag">80 planes × 0.1 nm · A = 40 × 40 nm²</span>
+    </div>
+    <canvas id="cell" aria-label="Ions next to the charged electrode"></canvas>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--counter)"></i>counterions (−), attracted</span>
+      <span><i class="dot" style="background:var(--coion)"></i>co-ions (+), repelled</span>
+      <span>each dot is one ion; vertical position is only for display</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><span class="k">MC cycles</span><span class="v" id="sCyc">0</span></div>
+      <div class="stat"><span class="k">Ions</span><span class="v" id="sIons">0</span></div>
+      <div class="stat"><span class="k">Acceptance</span><span class="v" id="sAcc">–</span></div>
+      <div class="stat"><span class="k">Energy</span><span class="v" id="sE">–</span></div>
+    </div>
+    <div class="msg" id="msg">Each cycle tries one hop per ion. Press “Step once” to follow a single trial.</div>
+    <canvas id="energy" aria-label="Energy versus MC cycles"></canvas>
+  </section>
+
+  <div class="grid2">
+    <section class="card" aria-labelledby="cTitle">
+      <div class="card-head"><h2 id="cTitle">Ion concentrations</h2><span class="tag" id="avgTag">running average</span></div>
+      <canvas id="conc" class="chart" aria-label="Concentration profiles"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--counter)"></i>c⁻ MC</span>
+        <span><i class="dot" style="background:var(--coion)"></i>c⁺ MC</span>
+        <span><i class="sw" style="border-color:var(--fg)"></i>full PB (Gouy-Chapman)</span>
+        <span><i class="sw dash" style="border-color:var(--muted)"></i>linearised PB (high-T limit)</span>
+      </div>
+    </section>
+    <section class="card" aria-labelledby="pTitle">
+      <div class="card-head"><h2 id="pTitle">Electric potential</h2><span class="tag">φ = 0 far from the electrode</span></div>
+      <canvas id="pot" class="chart" aria-label="Potential profile"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--phi)"></i>φ from MC charges</span>
+        <span><i class="sw" style="border-color:var(--fg)"></i>full PB</span>
+        <span><i class="sw dash" style="border-color:var(--muted)"></i>linearised PB</span>
+      </div>
+    </section>
+  </div>
+
+  <section class="card" aria-labelledby="chkTitle">
+    <div class="card-head"><h2 id="chkTitle">Checks against Gouy-Chapman</h2><span class="tag" id="chkTag"></span></div>
+    <div class="tag" id="linChip"></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Quantity</th><th>Monte Carlo</th><th>Theory</th><th>How the theory value is obtained</th></tr></thead>
+        <tbody>
+          <tr><td>Bulk salt concentration c₀</td><td class="num" id="c0mc">–</td><td class="num" id="c0in">–</td><td>MC: average of the last 2 nm. Theory column: the input value. They differ because the box holds a fixed amount of salt.</td></tr>
+          <tr><td>Debye length λ<sub>D</sub></td><td class="num" id="ldmc">–</td><td class="num" id="ldth">–</td><td>MC: decay length of φ, straight-line fit of ln φ between 1 and 4 nm. Theory: √(εε₀k<sub>B</sub>T / 2c₀q²) with the measured c₀.</td></tr>
+          <tr><td>Surface potential φ₀</td><td class="num" id="p0mc">–</td><td class="num" id="p0th">–</td><td>Grahame equation solved for φ₀ with the input σ.</td></tr>
+          <tr><td>Surface charge σ</td><td class="num" id="sgmc">–</td><td class="num" id="sgin">–</td><td>MC column: Grahame σ = √(8c₀εε₀k<sub>B</sub>T) sinh(qφ₀/2k<sub>B</sub>T) with φ₀ from MC. Theory column: the input σ.</td></tr>
+          <tr><td>Total ions at the surface c<sub>tot</sub>(0)</td><td class="num" id="ctmc">–</td><td class="num" id="ctth">–</td><td>2c₀ + σ² / (2εε₀k<sub>B</sub>T)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="notes" aria-label="How the model works">
+    <div class="card">
+      <h2>Charged planes</h2>
+      <p>Ions are smeared over planes of area A, so only the distance from the electrode matters. The field of an infinite charged plane is constant, so the energy of two planes grows linearly with their separation:</p>
+      <div class="formula">U = −Q₁Q₂·|x₁ − x₂| / (2εε₀A)</div>
+    </div>
+    <div class="card">
+      <h2>One trial move</h2>
+      <ol>
+        <li>Pick one ion at random (a counterion, then a co-ion).</li>
+        <li>Propose a hop to the plane on the left or right; hops through the electrode or the far wall are rejected.</li>
+        <li>Compute ΔU from that ion’s interaction with the electrode and all planes.</li>
+        <li>Accept if ΔU ≤ 0, otherwise accept with probability e<sup>−ΔU/k<sub>B</sub>T</sup>.</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h2>Things to try</h2>
+      <ol>
+        <li>Raise T: the layer gets thicker and the linearised PB curve catches up with full PB.</li>
+        <li>Raise the salt: λ<sub>D</sub> shrinks as 1/√c₀.</li>
+        <li>Set σ = 0: no double layer, flat profiles, φ = 0.</li>
+        <li>Large σ: linearised PB predicts negative c⁺, which is unphysical.</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>Units as in the lab notebook: nm, e, eV; ε = 80, ε₀ = 0.05526 e² eV⁻¹ nm⁻¹. Changing salt or σ restarts the run with new ion numbers; changing T continues from the current configuration. Point ions, no ion size effects.</footer>
+</div>
+
+<script>
+(() => {
+  // ---------- constants (same as EDL notebook) ----------
+  const a = 0.1, Lx = 80, A = 1600, KB = 8.617e-5, EPS0 = 0.05526, EPS = 80, q = 1;
+  const EE = EPS0 * EPS;                          // eps*eps0  [e^2 / (eV nm)]
+  const UCONV = q * q * a / (2 * EE * A);         // eV per (charge^2 x cell distance)
+  const SPEEDS = [1, 3, 8, 20, 60];
+  const WARM = 2000;                              // equilibration cycles before averaging starts
+  const NAVG_MAX = 20000;                         // average over (up to) the last 20000 cycles, as in the notebook
+  const X = Array.from({ length: Lx }, (_, j) => j * a);
+
+  // ---------- state ----------
+  let salt = 0.083, excess = 4, T = 298, speedIdx = 3;
+  let playing = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let np, nm, Np, Nm, nsurf, sigma, nbulk, energy, cycles, acc, tries, avgP, avgM, eHist, last, stepSpecies = -1;
+  let warm = WARM, navg = 0;                      // warm-up cycles left, cycles in the current average
+  function restartAverage() { avgP = Float64Array.from(np); avgM = Float64Array.from(nm); warm = WARM; navg = 0; }
+
+  function init() {
+    nbulk = Math.max(1, Math.round(salt * 0.6022 * A * a));   // ions per plane in the bulk
+    np = new Int32Array(Lx).fill(nbulk);
+    nm = new Int32Array(Lx).fill(nbulk + excess);
+    Np = nbulk * Lx; Nm = (nbulk + excess) * Lx;
+    nsurf = excess * Lx; sigma = q * nsurf / A;
+    energy = totalEnergy();
+    cycles = 0; acc = 0; tries = 0;
+    restartAverage();
+    eHist = [energy]; last = null;
+    msg("New run: " + nbulk + " co-ions and " + (nbulk + excess) + " counterions in every plane. The extra counterions balance σ = " + sigma.toFixed(2) + " e/nm².");
+  }
+  function totalEnergy() {
+    let U = 0;
+    for (let i = 0; i < Lx; i++) {
+      const ci = np[i] - nm[i];
+      U -= nsurf * ci * i;
+      for (let j = i + 1; j < Lx; j++) U -= ci * (np[j] - nm[j]) * (j - i);
+    }
+    return U * UCONV;
+  }
+  function ionEnergy(i, sign) {
+    let U = -sign * nsurf * i;
+    for (let j = 0; j < Lx; j++) U -= sign * (np[j] - nm[j]) * Math.abs(j - i);
+    return U;
+  }
+  function selectCell(counts, total) {
+    const r = Math.floor(Math.random() * total);
+    let cum = 0;
+    for (let i = 0; i < Lx; i++) { cum += counts[i]; if (r < cum) return i; }
+    return Lx - 1;
+  }
+  function trial(sign) {
+    const arr = sign < 0 ? nm : np, total = sign < 0 ? Nm : Np;
+    const i = selectCell(arr, total), inew = i + (Math.random() < 0.5 ? -1 : 1);
+    tries++;
+    if (inew < 0 || inew >= Lx) { last = { sign, i, inew, out: true }; return; }
+    const Up = ionEnergy(i, sign);
+    arr[i]--; arr[inew]++;
+    const dU = (ionEnergy(inew, sign) - Up) * UCONV;
+    let ok = true, p = 1, xi = null;
+    if (dU > 0) { p = Math.exp(-dU / (KB * T)); xi = Math.random(); ok = xi < p; }
+    if (ok) { energy += dU; acc++; } else { arr[i]++; arr[inew]--; }
+    last = { sign, i, inew, dU, p, xi, ok, out: false };
+  }
+  function cycle() {
+    const n = (Np + Nm) / 2;
+    for (let k = 0; k < n; k++) { trial(-1); trial(+1); }
+    cycles++;
+    // during warm-up the curves follow the system quickly; afterwards a cumulative mean (capped window)
+    let w;
+    if (warm > 0) { warm--; w = 1 / 50; if (warm === 0) { avgP = Float64Array.from(np); avgM = Float64Array.from(nm); navg = 1; return; } }
+    else { navg++; w = Math.max(1 / navg, 1 / NAVG_MAX); }
+    for (let j = 0; j < Lx; j++) { avgP[j] += w * (np[j] - avgP[j]); avgM[j] += w * (nm[j] - avgM[j]); }
+  }
+
+  // ---------- analysis (mirrors the Task-3 cells of the notebook) ----------
+  function analyse() {
+    const kT = KB * T, cp = [], cm = [], phi = new Float64Array(Lx);
+    for (let j = 0; j < Lx; j++) { cp.push(avgP[j] / (A * a)); cm.push(avgM[j] / (A * a)); }
+    for (let j = 0; j < Lx; j++) {
+      let s = 0;
+      for (let k = 0; k < Lx; k++) s -= (avgP[k] - avgM[k]) * Math.abs(j - k);
+      phi[j] = s * q * a / (2 * EE * A) - sigma / (2 * EE) * a * j;
+    }
+    const ref = phi[Lx - 1];
+    for (let j = 0; j < Lx; j++) phi[j] -= ref;
+    let c0 = 0, nfar = 0;
+    for (let j = 0; j < Lx; j++) if (X[j] >= Lx * a - 2.0) { c0 += 0.5 * (cp[j] + cm[j]); nfar++; }
+    c0 /= nfar;
+    const lam = Math.sqrt(EE * kT / (2 * c0 * q * q)), kap = 1 / lam;
+    // fit ln(phi) on 1-4 nm
+    let sx = 0, sy = 0, sxx = 0, sxy = 0, nf = 0;
+    for (let j = 0; j < Lx; j++) if (X[j] >= 1 && X[j] <= 4 && phi[j] > 0) { const y = Math.log(phi[j]); sx += X[j]; sy += y; sxx += X[j] * X[j]; sxy += X[j] * y; nf++; }
+    const slope = nf > 3 ? (nf * sxy - sx * sy) / (nf * sxx - sx * sx) : NaN;
+    const lamFit = slope < 0 ? -1 / slope : NaN;
+    const root = Math.sqrt(8 * c0 * EE * kT);
+    const phi0G = 2 * kT / q * Math.asinh(sigma / root);
+    const sigG = root * Math.sinh(q * phi[0] / (2 * kT));
+    const ct0 = 2 * c0 + sigma * sigma / (2 * EE * kT);
+    const gam = Math.tanh(q * phi0G / (4 * kT));
+    const phiPB = X.map(x => { const e = gam * Math.exp(-kap * x); return 2 * kT / q * Math.log((1 + e) / (1 - e)); });
+    const phiDH = X.map(x => sigma / (EE * kap) * Math.exp(-kap * x));
+    return { kT, cp, cm, phi, c0, lam, lamFit, phi0G, sigG, ct0, phiPB, phiDH,
+      cpPB: phiPB.map(f => c0 * Math.exp(-q * f / kT)), cmPB: phiPB.map(f => c0 * Math.exp(q * f / kT)),
+      cpDH: phiDH.map(f => c0 * (1 - q * f / kT)), cmDH: phiDH.map(f => c0 * (1 + q * f / kT)) };
+  }
+
+  // ---------- drawing helpers ----------
+  const $ = id => document.getElementById(id);
+  let C = {};
+  function readColors() {
+    const cs = getComputedStyle(document.documentElement);
+    ["--fg", "--muted", "--line", "--bg", "--surface", "--electrode", "--coion", "--counter", "--phi", "--ok"].forEach(k => C[k] = cs.getPropertyValue(k).trim());
+    C.mono = cs.getPropertyValue("--font-mono").trim();
+  }
+  function fit(cv) {
+    const dpr = window.devicePixelRatio || 1, r = cv.getBoundingClientRect();
+    const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return [ctx, r.width, r.height];
+  }
+  // fixed pseudo-random slot positions so dots do not flicker
+  const SLOTS = 400, slotY = [], slotX = [];
+  (function () { let s = 12345; const r = () => (s = (s * 16807) % 2147483647) / 2147483647; for (let k = 0; k < SLOTS * 2; k++) { slotY.push(r()); slotX.push(r()); } })();
+
+  function drawCell() {
+    const [ctx, w, h] = fit($("cell"));
+    ctx.clearRect(0, 0, w, h);
+    const ex = 30, x0 = ex + 6, cw = (w - x0 - 6) / Lx, top = 8, bot = h - 22, R = Math.max(1.4, Math.min(2.4, cw * 0.22));
+    // electrode
+    ctx.fillStyle = C["--electrode"]; ctx.fillRect(0, top, ex, bot - top);
+    ctx.fillStyle = C["--surface"]; ctx.font = "700 13px " + C.mono; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const nplus = Math.min(14, Math.round(sigma / 0.5 * 14));
+    for (let k = 0; k < nplus; k++) ctx.fillText("+", ex / 2, top + (k + 0.5) * (bot - top) / nplus);
+    // axis
+    ctx.fillStyle = C["--muted"]; ctx.font = "11px " + C.mono; ctx.textBaseline = "alphabetic";
+    for (let nmk = 0; nmk <= 8; nmk++) { const x = x0 + nmk / a * cw; ctx.fillText(nmk + (nmk === 8 ? " nm" : ""), Math.min(x, w - 18), h - 6); }
+    // ions
+    const draw = (arr, color, off) => {
+      ctx.fillStyle = color;
+      for (let j = 0; j < Lx; j++) for (let k = 0; k < arr[j] && k < SLOTS; k++) {
+        const s = (j * 37 + k + off) % (SLOTS * 2);
+        ctx.beginPath(); ctx.arc(x0 + (j + 0.15 + 0.7 * slotX[s]) * cw, top + R + slotY[s] * (bot - top - 2 * R), R, 0, 6.2832); ctx.fill();
+      }
+    };
+    draw(np, C["--coion"], 0);
+    draw(nm, C["--counter"], SLOTS);
+    // last trial marker
+    if (last && !playing) {
+      const col = last.out ? C["--muted"] : last.ok ? C["--ok"] : C["--coion"];
+      const xa = x0 + (last.i + 0.5) * cw, xb = x0 + (Math.min(Math.max(last.inew, -0.6), Lx - 0.4) + 0.5) * cw;
+      ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x0 + last.i * cw, top, cw, bot - top); ctx.setLineDash([]);
+      const y = top + 10;
+      ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(xb, y); ctx.stroke();
+      const d = Math.sign(xb - xa) || 1;
+      ctx.beginPath(); ctx.moveTo(xb, y); ctx.lineTo(xb - 6 * d, y - 4); ctx.lineTo(xb - 6 * d, y + 4); ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+    }
+  }
+
+  function axes(ctx, w, h, xmax, ylo, yhi, ylabel, fmt) {
+    const L = 50, Rm = 8, T0 = 10, B = h - 34;
+    const sx = x => L + (w - L - Rm) * x / xmax, sy = y => B - (B - T0) * (y - ylo) / (yhi - ylo);
+    ctx.strokeStyle = C["--line"]; ctx.lineWidth = 1; ctx.fillStyle = C["--muted"]; ctx.font = "11px " + C.mono;
+    const step = niceStep((yhi - ylo) / 4);
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let y = Math.ceil(ylo / step) * step; y <= yhi + 1e-12; y += step) {
+      ctx.beginPath(); ctx.moveTo(L, sy(y)); ctx.lineTo(w - Rm, sy(y)); ctx.stroke();
+      ctx.fillText(fmt(y), L - 6, sy(y));
+    }
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    for (let x = 0; x <= xmax; x++) ctx.fillText(String(x), sx(x), B + 15);
+    ctx.fillText("distance from electrode [nm]", L + (w - L - Rm) / 2, h - 3);
+    ctx.save(); ctx.translate(11, (T0 + B) / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(ylabel, 0, 0); ctx.restore();
+    if (ylo < 0 && yhi > 0) { ctx.strokeStyle = C["--muted"]; ctx.beginPath(); ctx.moveTo(L, sy(0)); ctx.lineTo(w - Rm, sy(0)); ctx.stroke(); }
+    return [sx, sy];
+  }
+  function niceStep(raw) { const p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p; return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p; }
+  function line(ctx, sx, sy, ys, color, dash, xmax) {
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash(dash ? [6, 4] : []); ctx.beginPath();
+    let started = false;
+    for (let j = 0; j < Lx; j++) { if (X[j] > xmax) break; const px = sx(X[j]), py = sy(ys[j]); started ? ctx.lineTo(px, py) : ctx.moveTo(px, py); started = true; }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  function dots(ctx, sx, sy, ys, color, xmax) {
+    ctx.fillStyle = color;
+    for (let j = 0; j < Lx; j++) { if (X[j] > xmax) break; ctx.beginPath(); ctx.arc(sx(X[j]), sy(ys[j]), 2.6, 0, 6.2832); ctx.fill(); }
+  }
+  function drawConc(r) {
+    const [ctx, w, h] = fit($("conc")); ctx.clearRect(0, 0, w, h);
+    const xmax = 5, vis = (arr) => arr.filter((_, j) => X[j] <= xmax);
+    const all = [].concat(vis(r.cp), vis(r.cm), vis(r.cpPB), vis(r.cmPB), vis(r.cpDH), vis(r.cmDH));
+    let lo = Math.min(0, ...all), hi = Math.max(...all) * 1.08;
+    const [sx, sy] = axes(ctx, w, h, xmax, lo, hi, "concentration [1/nm³]", v => v.toFixed(2));
+    line(ctx, sx, sy, r.cmDH, C["--muted"], true, xmax); line(ctx, sx, sy, r.cpDH, C["--muted"], true, xmax);
+    line(ctx, sx, sy, r.cmPB, C["--fg"], false, xmax); line(ctx, sx, sy, r.cpPB, C["--fg"], false, xmax);
+    dots(ctx, sx, sy, r.cm, C["--counter"], xmax); dots(ctx, sx, sy, r.cp, C["--coion"], xmax);
+  }
+  function drawPot(r) {
+    const [ctx, w, h] = fit($("pot")); ctx.clearRect(0, 0, w, h);
+    const xmax = 5, mv = arr => Array.from(arr, v => 1000 * v);
+    const p = mv(r.phi), pb = mv(r.phiPB), dh = mv(r.phiDH);
+    const all = [].concat(p, pb, dh).filter((_, k) => X[k % Lx] <= xmax);
+    let lo = Math.min(0, ...all), hi = Math.max(1, ...all) * 1.08;
+    const [sx, sy] = axes(ctx, w, h, xmax, lo, hi, "potential [mV]", v => v.toFixed(0));
+    line(ctx, sx, sy, dh, C["--muted"], true, xmax); line(ctx, sx, sy, pb, C["--fg"], false, xmax);
+    dots(ctx, sx, sy, p, C["--phi"], xmax);
+  }
+  function drawEnergy() {
+    const [ctx, w, h] = fit($("energy")); ctx.clearRect(0, 0, w, h);
+    if (eHist.length < 2) return;
+    const lo = Math.min(...eHist), hi = Math.max(...eHist), pad = (hi - lo) * 0.1 || 0.1;
+    const L = 50, Bm = h - 14;
+    const sx = k => L + (w - L - 4) * k / (eHist.length - 1), sy = v => Bm - (Bm - 4) * (v - lo + pad) / (hi - lo + 2 * pad);
+    ctx.fillStyle = C["--muted"]; ctx.font = "11px " + C.mono; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText(hi.toFixed(1), L - 6, sy(hi)); ctx.fillText(lo.toFixed(1), L - 6, sy(lo));
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; ctx.fillText("energy [eV] vs MC cycles since restart", L, h - 2);
+    ctx.strokeStyle = C["--coion"]; ctx.lineWidth = 1.6; ctx.beginPath();
+    eHist.forEach((v, k) => k ? ctx.lineTo(sx(k), sy(v)) : ctx.moveTo(sx(k), sy(v)));
+    ctx.stroke();
+  }
+
+  // ---------- text ----------
+  const msg = s => { $("msg").innerHTML = s; };
+  function describe() {
+    if (!last) return;
+    const who = last.sign < 0 ? "counterion (−)" : "co-ion (+)";
+    if (last.out) { msg("Trial: " + who + " in plane " + last.i + " tries to hop to plane " + last.inew + ", outside the box → rejected (electrode or far wall)."); return; }
+    let s = "Trial: " + who + " hops from plane " + last.i + " to " + last.inew + ". ΔU = " + (last.dU * 1000).toFixed(3) + " meV = " + (last.dU / (KB * T)).toFixed(3) + " k<sub>B</sub>T → ";
+    if (last.dU <= 0) s += "energy goes down, <span class=\"ok\">ACCEPTED</span>.";
+    else s += "p = e<sup>−ΔU/kT</sup> = " + last.p.toFixed(3) + ", ξ = " + last.xi.toFixed(3) + " → " + (last.ok ? "<span class=\"ok\">ACCEPTED</span>." : "<span class=\"bad\">REJECTED</span>, the ion stays.");
+    msg(s);
+  }
+  const f3 = v => isFinite(v) ? v.toFixed(3) : "–";
+  function table(r) {
+    $("c0mc").textContent = f3(r.c0) + " nm⁻³"; $("c0in").textContent = (salt * 0.6022).toFixed(3) + " nm⁻³";
+    $("ldmc").textContent = isFinite(r.lamFit) ? r.lamFit.toFixed(3) + " nm" : "–"; $("ldth").textContent = f3(r.lam) + " nm";
+    $("p0mc").textContent = (1000 * r.phi[0]).toFixed(1) + " mV"; $("p0th").textContent = (1000 * r.phi0G).toFixed(1) + " mV";
+    $("sgmc").textContent = f3(r.sigG) + " e/nm²"; $("sgin").textContent = sigma.toFixed(3) + " e/nm²";
+    $("ctmc").textContent = f3(r.cp[0] + r.cm[0]) + " nm⁻³"; $("ctth").textContent = f3(r.ct0) + " nm⁻³";
+    const ratio = q * r.phi0G / r.kT;
+    $("linChip").innerHTML = "qφ₀/k<sub>B</sub>T = " + ratio.toFixed(2) + " " +
+      (ratio < 0.5 ? "<span class=\"chip ok\">linearised PB fine</span>" : "<span class=\"chip warn\">nonlinear: linearised PB fails near the electrode</span>");
+    $("sCyc").textContent = cycles.toLocaleString("en-US");
+    $("sIons").textContent = (Np + Nm).toLocaleString("en-US");
+    $("sAcc").textContent = tries ? (100 * acc / tries).toFixed(1) + " %" : "–";
+    $("sE").textContent = energy.toFixed(2) + " eV";
+    const avgText = warm > 0 ? "equilibrating, " + warm.toLocaleString("en-US") + " cycles before averaging" : "average of " + Math.min(navg, NAVG_MAX).toLocaleString("en-US") + " cycles";
+    $("avgTag").textContent = avgText; $("chkTag").textContent = avgText;
+  }
+
+  // ---------- loop ----------
+  let frame = 0, r = null;
+  function render() {
+    r = analyse();
+    drawCell(); drawConc(r); drawPot(r); drawEnergy(); table(r);
+  }
+  function tick() {
+    if (playing) {
+      for (let k = 0; k < SPEEDS[speedIdx]; k++) { cycle(); if (cycles % 5 === 0) { eHist.push(energy); if (eHist.length > 600) eHist.shift(); } }
+      if (frame % 8 === 0) describe();
+      frame++;
+    }
+    render();
+    requestAnimationFrame(tick);
+  }
+
+  // ---------- controls ----------
+  const setPlay = v => { playing = v; $("play").textContent = playing ? "Pause" : "Play"; };
+  $("play").addEventListener("click", () => setPlay(!playing));
+  $("step").addEventListener("click", () => { setPlay(false); trial(stepSpecies); stepSpecies = -stepSpecies; describe(); });
+  $("reset").addEventListener("click", () => init());
+  $("salt").addEventListener("input", e => { salt = +e.target.value; $("saltOut").textContent = salt.toFixed(3) + " M"; init(); });
+  $("sig").addEventListener("input", e => { excess = +e.target.value; $("sigOut").textContent = (excess * Lx / A).toFixed(2) + " e/nm²"; init(); });
+  $("temp").addEventListener("input", e => {
+    T = +e.target.value; $("tempOut").textContent = T + " K";
+    restartAverage();
+    msg("Temperature set to " + T + " K. The run continues from the current ions; averaging restarts after " + WARM + " equilibration cycles.");
+  });
+  $("speed").addEventListener("input", e => { speedIdx = +e.target.value - 1; $("speedOut").textContent = SPEEDS[speedIdx] + " cyc/frame"; });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readColors);
+  new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  readColors(); init(); setPlay(playing);
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
